@@ -63,12 +63,30 @@ void recvMsg(uint8_t *data, size_t len){
   }
 }
 
+uint16_t getDustRaw(){
+  // Turn on the dust sensor LED by setting digital pin LOW.
+  digitalWrite(PIN_DUST_LED, LOW);
+
+  // Wait 0.28ms before taking a reading of the output voltage as per spec.
+  delayMicroseconds(280);
+
+  // Record the output voltage. This operation takes around 100 microseconds.
+  uint16_t VoRaw = analogRead(PIN_DUST_ANALOG);
+
+  // Turn the dust sensor LED off by setting digital pin HIGH.
+  digitalWrite(PIN_DUST_LED, HIGH);
+
+  return VoRaw;
+}
+
 unsigned int getDust(){
   char logBuffer[255];
 
   for (int i = 0; i <= 10; i++) {
+      int dust = dustSensor.getDustDensity();
+
       if(debug){
-        sprintf(logBuffer, "Density: %d ug/m3", dustSensor.getDustDensity());
+        sprintf(logBuffer, "Raw dust sensor value: %d, Density: %d ug/m3", getDustRaw(), dust);
         serial.println(logBuffer);
       }
       
