@@ -11,12 +11,12 @@ This project was created to control DIY Smart Air Purifier.
 
 ### 0. WifiManager, OTA and WebSerial
 
-For convinience I have implemented three helpful libraries: 
+For convinience I have implemented this 3 libraries: 
 - WifiManager makes possible connecting to any wireless router without hardcoding Wifi credentials: 
 [Docs](https://github.com/khoih-prog/ESPAsync_WiFiManager)
 - Over The Air Update is available on `/update` route. You are not restricted to wireless firmware updates:
 [Docs](https://github.com/ayushsharma82/ElegantOTA)
-- WebSerial helps in debbuging and monitoring device. It is available on `/webserial`. Serial output will be printed there.
+- WebSerial helps debug and monitor device. It is available on `/webserial`. Serial output will be printed there.
 [Docs](https://github.com/ayushsharma82/WebSerial)
 <br>Additionaly, I prepared a few commands, that you can send through remote terminal:
 1. Enable and disable debug mode:
