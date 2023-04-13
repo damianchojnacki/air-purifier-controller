@@ -45,3 +45,35 @@ class MultiSerial
             webSerial.print(message);
         }
 };
+
+extern bool debug;
+extern MultiSerial serial;
+
+void recvMsg(uint8_t *data, size_t len){
+  serial.println();
+  serial.println("Received Data...");
+
+  String d = "";
+
+  for(unsigned int i = 0; i < len; i++){
+    d += char(data[i]);
+  }
+
+  serial.println(d);
+
+  if(d == "debug=true"){
+    debug = true;
+  }
+
+  if(d == "debug=false"){
+    debug = false;
+  }
+
+  if(d == "restart"){
+    ESP.restart();
+  }
+
+  if(d == "reset"){
+    ESP.reset();
+  }
+}

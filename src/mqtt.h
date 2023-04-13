@@ -1,7 +1,10 @@
 #include <ESP8266WiFi.h>
 #include <ArduinoMqttClient.h>
 
-int fan_manual = 0;
+extern int fan_manual;
+extern MultiSerial serial;
+extern bool debug;
+extern void updatePreset(char* preset);
 
 WiFiClient client;
 MqttClient mqttClient(client);
@@ -9,13 +12,22 @@ MqttClient mqttClient(client);
 const char broker[] = "192.168.0.100";
 int port = 1883;
 
+template <typename T>
+void sendMQTTMessage(char* topic, T message) {
+    mqttClient.beginMessage(topic);
+    mqttClient.print(message);
+    mqttClient.endMessage();
+}
+
 void handleMQTT() {
     int messageSize = mqttClient.parseMessage();
 
     if (messageSize) {
-        Serial.print("Message arrived on topic: ");
-        Serial.print(mqttClient.messageTopic());
-        Serial.print(" : ");
+        if(debug){
+            serial.print("Message arrived on topic: ");
+            serial.print(mqttClient.messageTopic());
+            serial.print(" : ");
+        }
 
         char messageTemp[messageSize];
 
@@ -23,27 +35,37 @@ void handleMQTT() {
             messageTemp[i] = (char) mqttClient.read();
         }
 
-        Serial.print(atoi(messageTemp));
-        Serial.println();
+        int speed = atoi(messageTemp);
+
+        if(debug){
+            serial.print(speed);
+            serial.println();
+        }
 
         // Changes the fan speed according to the message
-        fan_manual = atoi(messageTemp);
+        fan_manual = speed;
+
+        if(speed == 0){
+            updatePreset("auto");
+        } else {
+            updatePreset("manual");
+        }
     }
 }
 
 void watchMQTT() {
     if (!mqttClient.connect(broker, port)) {
-        Serial.print("MQTT connection failed! Error code = ");
-        Serial.println(mqttClient.connectError());
+        serial.print("MQTT connection failed! Error code = ");
+        serial.println(mqttClient.connectError());
 
         while (1);
     }
 
-    char topic[255];
+    char topic[64];
 
     sprintf(topic, "/air-purifiers/%d", ESP.getChipId());
 
     mqttClient.subscribe(topic);
 
-    Serial.println("Watching for changes...");
+    serial.println("Watching for changes...");
 }

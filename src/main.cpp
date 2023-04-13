@@ -1,8 +1,6 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <ESP8266HTTPClient.h>
-#include <NTPClient.h>
-#include <WiFiUdp.h>
 #include <ESP8266WiFi.h>
 #include <DNSServer.h>
 #include <AsyncElegantOTA.h>
@@ -11,57 +9,25 @@
 #include <ESPAsyncWebServer.h>
 #include <GP2YDustSensor.h>
 #include <WebSerial.h>
-#include "mqtt.h"
-#include "display.h"
 #include "Serial.h"
+#include "mqtt.h"
+#include "timer.h"
+#include "display.h"
 
 #define PIN_DUST_LED 14 // D5
 #define PIN_DUST_ANALOG 0 // A0
 #define PIN_FAN_PWM 12 //D6
 
-const char *SERVER_URL = "http://192.168.0.100";
-
 int fan_should_change = 0;
 int fan_current = 60;
-
-WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP, "pool.ntp.org");
-WiFiClient wifiClient;
-AsyncWebServer server(80);
-DNSServer dnsServer;
-GP2YDustSensor dustSensor(GP2YDustSensorType::GP2Y1010AU0F, PIN_DUST_LED, PIN_DUST_ANALOG);
-MultiSerial serial;
-
+int fan_manual = 0;
 bool debug = false;
 
-void recvMsg(uint8_t *data, size_t len){
-  serial.println();
-  serial.println("Received Data...");
-
-  String d = "";
-
-  for(unsigned int i = 0; i < len; i++){
-    d += char(data[i]);
-  }
-
-  serial.println(d);
-
-  if(d == "debug=true"){
-    debug = true;
-  }
-
-  if(d == "debug=false"){
-    debug = false;
-  }
-
-  if(d == "restart"){
-    ESP.restart();
-  }
-
-  if(d == "reset"){
-    ESP.reset();
-  }
-}
+WiFiClient wifiClient;
+AsyncWebServer server(80);
+AsyncDNSServer dnsServer;
+GP2YDustSensor dustSensor(GP2YDustSensorType::GP2Y1010AU0F, PIN_DUST_LED, PIN_DUST_ANALOG);
+MultiSerial serial;
 
 uint16_t getDustRaw(){
   // Turn on the dust sensor LED by setting digital pin LOW.
@@ -90,7 +56,7 @@ unsigned int getDust(){
         serial.println(logBuffer);
       }
       
-      delay(580);
+      delay(100);
   }
 
   unsigned int dustAverage = dustSensor.getRunningAverage();
@@ -107,42 +73,13 @@ unsigned int getDust(){
   return dustAverage;
 }
 
-void updateTime(){
-    const int UTC_OFFSET_SUMMER = 7200;
-    const int UTC_OFFSET_WINTER = 3600;
-
-    timeClient.update();
-
-    time_t rawtime = timeClient.getEpochTime();
-    struct tm *ti = localtime(&rawtime);
-  
-    int month = ti->tm_mon + 1;
-    int day = ti->tm_mday;
-    int week_day = timeClient.getDay();
-
-    // determine utc offset
-    if(
-      ((month == 3) && ((day-week_day) >= 25)) ||
-      ((month > 3) && (month < 10)) ||
-      ((month == 10) && ((day-week_day)) <= 24)
-    ){
-      timeClient.setTimeOffset(UTC_OFFSET_SUMMER);
-    } else {
-      timeClient.setTimeOffset(UTC_OFFSET_WINTER);
-    }
-}
-
 int getFanSpeed(int dust) {
     const int SPEED_MIN = 30;
     const int SPEED_DEFAULT = 40;
 
     if (fan_manual >= SPEED_MIN) {
-        fan_current = fan_manual;
-
-        return fan_current;
+        return fan_manual;
     }
-
-    updateTime();
 
     const int SLEEP_START = 23;
     const int SLEEP_END = 10;
@@ -152,87 +89,62 @@ int getFanSpeed(int dust) {
           serial.println("Sleep mode.");
         } 
 
-        fan_current = SPEED_MIN;
-
-        return fan_current;
+        return SPEED_MIN;
     }
 
-    const int DUST_THRESHOLD = 12;
+    const int DUST_THRESHOLD = 13;
 
     if (dust > DUST_THRESHOLD) {
-      fan_current = map(dust, 12, 24, SPEED_DEFAULT, 100);
+      int speed = map(dust, DUST_THRESHOLD, 55, SPEED_MIN, 100);
 
-      if(fan_current > 100){
-        fan_current = 100;
+      if(speed > 100){
+        speed = 100;
       }
-    } else {
-      fan_current = SPEED_DEFAULT;
+
+      return speed;
     }
 
-    /*
-    if (dust > DUST_THRESHOLD) {
-        fan_should_change++;
-    } else {
-        fan_should_change--;
-    }
-
-    if (fan_should_change > 5) {
-        fan_should_change = 0;
-
-        fan_current = map(dust, 12, 24, 100, SPEED_DEFAULT);
-
-        if(fan_current > 100){
-          fan_current = 100;
-        }
-    } else if (fan_should_change < -5) {
-        fan_should_change = 0;
-
-        fan_current = SPEED_DEFAULT;
-    }
-    */
-
-    return fan_current;
+    return SPEED_DEFAULT;
 }
 
 void updateDustDensity(int dust){
-    HTTPClient http;
+    char topic[64];
 
-    char buffer[255];
-    
-    // dust level server url
-    sprintf(buffer, "%s/api/air-purifiers/%d", SERVER_URL, ESP.getChipId());
+    sprintf(topic, "/air-purifiers/%d/dust", ESP.getChipId());
 
-    serial.print("Updating dust density... ");
+    sendMQTTMessage(topic, dust);
+}
 
-    http.begin(wifiClient, buffer); 
+void updateFanSpeed(int speed) {
+    char topic[64];
 
-    http.addHeader("Content-Type", "application/json");
+    sprintf(topic, "/air-purifiers/%d/speed", ESP.getChipId());
+
+    sendMQTTMessage(topic, speed);
+}
+
+void updatePreset(char* preset) {
+    char topic[64];
+
+    sprintf(topic, "/air-purifiers/%d/preset", ESP.getChipId());
+
+    sendMQTTMessage(topic, preset);
+}
+
+void updateState() {
+    char topic[64];
+
+    sprintf(topic, "/air-purifiers/%d/state", ESP.getChipId());
+
+    sendMQTTMessage(topic, "ON");
 
     if(debug){
+      sprintf(topic, "/air-purifiers/%d", ESP.getChipId());
+
+      serial.print("Watching for changes on topic: ");
+      serial.print(topic);
       serial.println();
-      serial.print("POST request to: ");
-      serial.println(buffer);
     }
-
-    delay(500);
-
-    sprintf(buffer, "{\"dust\":%d}", dust);
-
-    delay(500);
-
-    if(debug){
-      serial.println("Request body:");
-      serial.println(buffer);
-
-      serial.print("Status code: ");
-    }
-
-    int status = http.POST(buffer);        
-
-    http.end();
-
-    serial.print(status);
-    serial.println();
 }
 
 void setup(void) {
@@ -240,7 +152,7 @@ void setup(void) {
 
     ESPAsync_WiFiManager wifiManager(&server, &dnsServer);
 
-    char buffer[255];
+    char buffer[64];
 
     sprintf(buffer, "Air Purifier %d", ESP.getChipId());
 
@@ -279,25 +191,35 @@ void setup(void) {
     // dust sensor
     pinMode(PIN_DUST_LED, OUTPUT);
 
-    setupDisplay();
+    //setupDisplay();
 
     dustSensor.begin();
 
     timeClient.begin();
 
     watchMQTT();
+
+    updatePreset("auto");
 }
 
-int cycles = 10;
+int cycles = 0;
 unsigned int dust_density = 0;
 
 void loop(void) {
     // handle manual fan speed change
     handleMQTT();
-    // adjust fan speed
-    analogWrite(PIN_FAN_PWM, getFanSpeed(dust_density));
+
+    int speed = getFanSpeed(dust_density);
+
+    if(speed != fan_current){
+      fan_current = speed;
+      updateFanSpeed(fan_current);
+      analogWrite(PIN_FAN_PWM, speed);
+    }
 
     if(cycles == 0){
+      updateTime();
+
       serial.println();
       serial.println(timeClient.getFormattedTime());
       serial.println();
@@ -309,7 +231,7 @@ void loop(void) {
       serial.print(avg);
       serial.println("ug/m3");
     
-      displayDust(avg);
+      //displayDust(avg);
       updateDustDensity(avg);
 
       serial.print("Fan speed: ");
@@ -317,10 +239,10 @@ void loop(void) {
       serial.print("%");
       serial.println();
 
-      cycles = 10;
+      cycles = 1000;
     }
 
     cycles--;
     
-    delay(1000);
+    delay(10);
 }
